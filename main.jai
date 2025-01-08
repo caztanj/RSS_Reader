@@ -1,0 +1,285 @@
+main :: () {
+    #if OS == .WINDOWS {
+        Windows :: #import "Windows";
+        Windows.SetProcessDPIAware();
+        Windows.timeBeginPeriod(1);
+    }
+
+    window = create_window(window_width, window_height, "RSS Reader");
+    window_width, window_height = Simp.get_render_dimensions(window);
+    Simp.prepare_window(window, 8);
+    Simp.set_render_target(window, .LEFT_HANDED);
+
+    init_fonts();
+    ui_init();
+
+    read_config_file();
+
+    init_networker();
+
+    for config.feeds {
+        success := fetch(it.url);
+        if !success  fatal("fetch");
+    }
+
+    results := 0;
+
+    quit := false;
+    while !quit {
+        current_time = seconds_since_init();
+
+        if state == .Loading {
+            completed, success := get_completed();
+            if !success  break;
+
+            for completed {
+                feed := get_feed(it.url);
+                assert(feed != null);
+
+                root, result := xml_parse(it.message);
+                if result.status != .ok  fatal("xml_parse");
+                // defer xml_free(root);
+
+                for root {
+                    if it.type == .element && it.name == "item" {
+                        article: Article;
+
+                        for it {
+                            if it.type == .element {
+                                if it.name == {
+                                    case "title";
+                                        if it.first_child.type != .pcdata {
+                                            article.title = "---";
+                                        } else {
+                                            article.title = copy_string(it.first_child.value);
+                                        }
+                                    case "link";
+                                        if it.first_child.type != .pcdata {
+                                            article.link = "---";
+                                        } else {
+                                            article.link = copy_string(it.first_child.value);
+                                        }
+                                    case "pubDate";
+                                        if it.first_child.type != .pcdata {
+                                            article.date = "---";
+                                        } else {
+                                            article.date = copy_string(it.first_child.value);
+                                        }
+                                    case "description";
+                                        if it.first_child.type != .pcdata {
+                                            article.description = "---";
+                                        } else {
+                                            article.description = copy_string(it.first_child.value);
+                                        }
+                                }
+                            }
+                        }
+
+                        array_add(*feed.articles, article);
+                    }
+                }
+
+                results += 1;
+                if results == config.feeds.count - 1  state = .Main;
+            }
+        }
+
+        Input.update_window_events();
+        for Input.get_window_resizes() {
+            Simp.update_window(it.window);
+
+            if it.window == window {
+                window_width = it.width;
+                window_height = it.height;
+            }
+        }
+
+        for Input.events_this_frame {
+            if it.type == .QUIT  quit = true;
+
+            getrect_handle_event(it);
+        }
+
+        draw_one_frame();
+
+        reset_temporary_storage();
+    }
+
+    deinit_networker();
+
+    report_memory_leaks();
+}
+
+init_fonts :: () {
+    path := path_strip_filename(get_path_of_running_executable());
+    set_working_directory(path);
+
+    pixel_height := 14;
+    font = Simp.get_font_at_size(".", "FiraCode-Retina.ttf", pixel_height);
+    assert(font != null);
+}
+
+read_config_file :: () {
+    handler: Text_File_Handler;
+    defer deinit(*handler);
+
+    found, exe_path, exe_name := split_from_right(get_path_of_running_executable(), #char "/");
+    if !found  fatal("Unable to find my own executable?!");
+
+    filename := tprint("%/%", exe_path, "config.conf");
+
+    short_name := "config";
+    start_file(*handler, short_name, filename, false);
+    if handler.failed  fatal("Unable to read config file");
+
+    section := Config_Section.Unspecified;
+
+    while true {
+        line, found := consume_next_line(*handler);
+        if !found  break;
+
+        {
+            if line == "[[feeds]]" {
+                section = .Feeds;
+            } else if section == .Feeds {
+                if starts_with(trim_left(line), "//")  continue;
+
+                found, name, url := split_from_left(line, "::");
+                if !found  fatal(tprint("Could not parse line '%'", line));
+
+                name = trim(name);
+                url = trim(url);
+
+                array_add(*config.feeds, Feed.{ name = name, url = url });
+            } else {
+                fatal(tprint("Could not parse line '%'", line));
+            }
+        }
+    }
+}
+
+draw_one_frame :: () {
+    Simp.clear_render_target(0, 0, 0, 1);
+
+    ui_per_frame_update(window, window_width, window_height, current_time);
+
+    rect := get_rect(0, 0, xx window_width, xx window_height);
+
+    if state == {
+        case .Loading;
+            text := "Loading...";
+
+            Simp.set_shader_for_color();
+
+            color := Vector4.{1, 1, 1, 1};
+
+            text_width := Simp.prepare_text(font, text);
+            text_x := (rect.w - text_width) / 2;
+            text_y := rect.h / 2 + font.character_height / 4;
+
+            Simp.draw_prepared_text(font, xx text_x, xx text_y, color);
+
+        case .Main;
+            Simp.set_shader_for_color();
+
+            button_height :: 40;
+
+            left, right := cut_left(rect, rect.w / 3);
+
+            region, inside := begin_scrollable_region(left);
+            s := inside;
+            s.h = button_height;
+            s.y -= scroll_value;
+
+            for config.feeds {
+                pressed := button(s, it.name, identifier = it_index);
+
+                if it_index != config.feeds.count  s.y += floor(button_height * 1.1 + 0.5);
+            }
+
+            end_scrollable_region(region, s.x + s.w, s.y + s.h, *scroll_value);
+    }
+
+    Simp.swap_buffers(window);
+}
+
+get_feed :: (url: string) -> *Feed {
+    for * config.feeds {
+        if it.url == url  return it;
+    }
+
+    return null;
+}
+
+print_feed :: (feed: Feed) {
+    print("% (%)\n", feed.name, feed.url);
+
+    for feed.articles {
+        print("% - % (%)\n", it.title, it.date, it.link);
+        print("  %\n", it.description);
+    }
+
+    print("\n");
+}
+
+fatal :: (message: string) {
+    print("Fatal: %\n", message);
+    exit(1);
+}
+
+Config_Section :: enum {
+    Unspecified;
+    Feeds;
+}
+
+Config :: struct {
+    feeds: [..] Feed;
+}
+
+Article :: struct {
+    title:       string;
+    link:        string;
+    date:        string;
+    description: string;
+}
+
+Feed :: struct {
+    name: string;
+    url:  string;
+
+    articles: [..] Article;
+}
+
+State :: enum {
+    Loading;
+    Main;
+}
+
+config: Config;
+
+window:        Window_Type;
+window_width:  s32 = 1280;
+window_height: s32 = 720;
+
+font: *Simp.Dynamic_Font;
+
+state := State.Loading;
+
+current_time: float64;
+
+scroll_value: float;
+
+#import "Basic"()(MEMORY_DEBUGGER = true, TEMP_ALLOCATOR_POISON_FREED_MEMORY = true);
+#import "Curl"()(LINUX_USE_SYSTEM_LIBRARY = true);
+#import "GetRect_LeftHanded";
+#import "Math";
+#import "String";
+#import "System";
+#import "Text_File_Handler";
+#import "Window_Creation";
+#import "XML";
+
+Input :: #import "Input";
+Simp :: #import "Simp";
+
+#load "networker.jai";
