@@ -115,7 +115,7 @@ init_fonts :: () {
     set_working_directory(path);
 
     pixel_height := 14;
-    font = Simp.get_font_at_size(".", "FiraCode-Retina.ttf", pixel_height);
+    font = Simp.get_font_at_size(".", "fonts/FiraCode-Retina.ttf", pixel_height);
     assert(font != null);
 }
 
