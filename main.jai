@@ -80,7 +80,7 @@ main :: () {
                 }
 
                 results += 1;
-                if results == config.feeds.count - 1  state = .Main;
+                if results == config.feeds.count  state = .Main;
             }
         }
 
@@ -189,15 +189,31 @@ draw_one_frame :: () {
             region, inside := begin_scrollable_region(left);
             s := inside;
             s.h = button_height;
-            s.y -= scroll_value;
+            s.y -= feeds_scroll_value;
 
-            for config.feeds {
+            for * config.feeds {
                 pressed := button(s, it.name, identifier = it_index);
+                if pressed  selected_feed = it;
 
                 if it_index != config.feeds.count  s.y += floor(button_height * 1.1 + 0.5);
             }
 
-            end_scrollable_region(region, s.x + s.w, s.y + s.h, *scroll_value);
+            end_scrollable_region(region, s.x + s.w, s.y + s.h, *feeds_scroll_value);
+
+            if selected_feed != null {
+                region, inside := begin_scrollable_region(right);
+                s := inside;
+                s.h = button_height;
+                s.y -= articles_scroll_value;
+
+                for selected_feed.articles {
+                    pressed := button(s, it.title, identifier = it_index);
+
+                    if it_index != selected_feed.articles.count  s.y += floor(button_height * 1.0 + 0.5);
+                }
+
+                end_scrollable_region(region, s.x + s.w, s.y + s.h, *articles_scroll_value);
+            }
     }
 
     Simp.swap_buffers(window);
@@ -267,11 +283,15 @@ state := State.Loading;
 
 current_time: float64;
 
-scroll_value: float;
+feeds_scroll_value:    float;
+articles_scroll_value: float;
+
+selected_feed: *Feed;
 
 #import "Basic"()(MEMORY_DEBUGGER = true, TEMP_ALLOCATOR_POISON_FREED_MEMORY = true);
 #import "Curl"()(LINUX_USE_SYSTEM_LIBRARY = true);
 #import "GetRect_LeftHanded";
+#import "Hash_Table";
 #import "Math";
 #import "String";
 #import "System";
