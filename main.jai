@@ -55,9 +55,9 @@ main :: () {
                                         }
                                     case "link";
                                         if it.first_child.type != .pcdata {
-                                            article.link = "---";
+                                            article.url = "---";
                                         } else {
-                                            article.link = copy_string(it.first_child.value);
+                                            article.url = copy_string(it.first_child.value);
                                         }
                                     case "pubDate";
                                         if it.first_child.type != .pcdata {
@@ -208,7 +208,7 @@ draw_one_frame :: () {
 
                 for selected_feed.articles {
                     pressed := button(s, it.title, identifier = it_index);
-                    if pressed  run_command("explorer", it.link);
+                    if pressed  open_url(it.url);
 
                     if it_index != selected_feed.articles.count  s.y += floor(button_height * 1.0 + 0.5);
                 }
@@ -218,6 +218,10 @@ draw_one_frame :: () {
     }
 
     Simp.swap_buffers(window);
+}
+
+open_url :: (url: string) {
+    run_command("explorer", url);
 }
 
 get_feed :: (url: string) -> *Feed {
@@ -232,7 +236,7 @@ print_feed :: (feed: Feed) {
     print("% (%)\n", feed.name, feed.url);
 
     for feed.articles {
-        print("% - % (%)\n", it.title, it.date, it.link);
+        print("% - % (%)\n", it.title, it.date, it.url);
         print("  %\n", it.description);
     }
 
@@ -255,7 +259,7 @@ Config :: struct {
 
 Article :: struct {
     title:       string;
-    link:        string;
+    url:         string;
     date:        string;
     description: string;
 }
