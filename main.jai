@@ -208,6 +208,7 @@ draw_one_frame :: () {
 
                 for selected_feed.articles {
                     pressed := button(s, it.title, identifier = it_index);
+                    if pressed  run_command("explorer", it.link);
 
                     if it_index != selected_feed.articles.count  s.y += floor(button_height * 1.0 + 0.5);
                 }
@@ -293,6 +294,7 @@ selected_feed: *Feed;
 #import "GetRect_LeftHanded";
 #import "Hash_Table";
 #import "Math";
+#import "Process";
 #import "String";
 #import "System";
 #import "Text_File_Handler";
