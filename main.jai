@@ -28,7 +28,7 @@ main :: () {
     while !quit {
         current_time = seconds_since_init();
 
-        if state == .Loading {
+        if screen == .Loading {
             completed, success := get_completed();
             if !success  break;
 
@@ -80,7 +80,7 @@ main :: () {
                 }
 
                 results += 1;
-                if results == config.feeds.count  state = .Main;
+                if results == config.feeds.count  screen = .Main;
             }
         }
 
@@ -105,7 +105,7 @@ main :: () {
         reset_temporary_storage();
     }
 
-    deinit_networker();
+    // deinit_networker();
 
     report_memory_leaks();
 }
@@ -165,11 +165,11 @@ draw_one_frame :: () {
 
     rect := get_rect(0, 0, xx window_width, xx window_height);
 
-    if state == {
+    Simp.set_shader_for_color();
+
+    if #complete screen == {
         case .Loading;
             text := "Loading...";
-
-            Simp.set_shader_for_color();
 
             color := Vector4.{1, 1, 1, 1};
 
@@ -180,8 +180,6 @@ draw_one_frame :: () {
             Simp.draw_prepared_text(font, xx text_x, xx text_y, color);
 
         case .Main;
-            Simp.set_shader_for_color();
-
             button_height :: 40;
 
             left, right := cut_left(rect, rect.w / 3);
@@ -206,14 +204,51 @@ draw_one_frame :: () {
                 s.h = button_height;
                 s.y -= articles_scroll_value;
 
-                for selected_feed.articles {
+                for * selected_feed.articles {
                     pressed := button(s, it.title, identifier = it_index);
-                    if pressed  open_url(it.url);
+                    if pressed {
+                        screen = .Article;
+                        selected_article = it;
+                    }
 
                     if it_index != selected_feed.articles.count  s.y += floor(button_height * 1.0 + 0.5);
                 }
 
                 end_scrollable_region(region, s.x + s.w, s.y + s.h, *articles_scroll_value);
+            }
+
+        case .Article;
+            header, body := cut_top(rect, 60);
+            back, title := cut_left(header, 120);
+            open:, title = cut_right(title, 120);
+
+            body.y += 20;
+            body.h -= 20;
+
+            pressed := button(back, "Back");
+            if pressed  screen = .Main;
+
+            pressed = button(open, "Open");
+            if pressed  open_url(selected_article.url);
+
+            color := Vector4.{1, 1, 1, 1};
+
+            text_width := Simp.prepare_text(font, selected_article.title);
+            text_x := title.x + (title.w - text_width) / 2;
+            text_y := title.h / 2 + font.character_height / 4;
+
+            Simp.draw_prepared_text(font, xx text_x, xx text_y, color);
+
+            max_x_chars := cast(int) floor(body.w / font.x_advance);
+            row := 0;
+            while row * max_x_chars < selected_article.description.count {
+                start := selected_article.description.data + row * max_x_chars;
+                count := min(max_x_chars, selected_article.description.count - row * max_x_chars);
+                text := string.{ data = start, count = count };
+
+                Simp.draw_text(font, xx body.x, xx body.y + (font.character_height + 4) * row, text);
+
+                row += 1;
             }
     }
 
@@ -271,9 +306,10 @@ Feed :: struct {
     articles: [..] Article;
 }
 
-State :: enum {
+Screen :: enum {
     Loading;
     Main;
+    Article;
 }
 
 config: Config;
@@ -284,14 +320,15 @@ window_height: s32 = 720;
 
 font: *Simp.Dynamic_Font;
 
-state := State.Loading;
+screen := Screen.Loading;
 
 current_time: float64;
 
 feeds_scroll_value:    float;
 articles_scroll_value: float;
 
-selected_feed: *Feed;
+selected_feed:    *Feed;
+selected_article: *Article;
 
 #import "Basic"()(MEMORY_DEBUGGER = true, TEMP_ALLOCATOR_POISON_FREED_MEMORY = true);
 #import "Curl"()(LINUX_USE_SYSTEM_LIBRARY = true);
