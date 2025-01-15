@@ -106,7 +106,7 @@ main :: () {
         reset_temporary_storage();
     }
 
-    // deinit_networker();
+    deinit_networker();
 
     report_memory_leaks();
 }
