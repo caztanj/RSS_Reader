@@ -12,6 +12,7 @@ main :: () {
 
     init_fonts();
     ui_init();
+    init_theme();
 
     read_config_file();
 
@@ -108,6 +109,28 @@ main :: () {
     // deinit_networker();
 
     report_memory_leaks();
+}
+
+init_theme :: () {
+    BLACK :: Vector4.{0, 0, 0, 1};
+    WHITE :: Vector4.{1, 1, 1, 1};
+    ORANGE :: Vector4.{1, 0.57, 0.0, 1};
+
+    overall_theme.button_theme.font = font;
+    overall_theme.button_theme.alignment = .Left;
+    overall_theme.button_theme.rectangle_shape.roundedness = 0;
+
+    overall_theme.scrollable_region_theme.scrollbar_nib_theme.surface_color = WHITE;
+    overall_theme.scrollable_region_theme.scrollbar_nib_theme.surface_color_over = ORANGE;
+    overall_theme.scrollable_region_theme.scrollbar_nib_theme.rectangle_shape.roundedness = 0;
+
+    overall_theme.scrollable_region_theme.region_background.shape.roundedness = 0;
+    overall_theme.scrollable_region_theme.region_background.frame_color = BLACK;
+    overall_theme.scrollable_region_theme.region_background.color = BLACK;
+
+    overall_theme.scrollable_region_theme.scrollbar_background.color = BLACK;
+
+    set_default_theme(*overall_theme);
 }
 
 init_fonts :: () {
@@ -311,6 +334,8 @@ Screen :: enum {
     Main;
     Article;
 }
+
+overall_theme: Overall_Theme;
 
 config: Config;
 
