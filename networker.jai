@@ -1,8 +1,26 @@
+completed_requests_lock: Mutex;
+completed_requests: [..] Completed_Request;
+
 init_networker :: () {
     multi_handle = curl_multi_init();
+
+    init(*completed_requests_lock);
+    init(*work_queue_lock);
+
+    thread_init(*thread, worker_proc);
+    thread_start(*thread);
 }
 
 deinit_networker :: () {
+    work := New(Work);
+    work.type = .Stop;
+
+    lock(*work_queue_lock);
+    array_add(*work_queue, work);
+    unlock(*work_queue_lock);
+
+    thread_deinit(*thread);
+
     for requests {
         assert(curl_multi_remove_handle(multi_handle, it.handle) == .OK);
         curl_easy_cleanup(it.handle);
@@ -11,74 +29,116 @@ deinit_networker :: () {
     curl_multi_cleanup(multi_handle);
 }
 
-get_completed :: () -> [] Completed_Request /* temporary storage */, success: bool #must {
-    fail :: () #expand {
-        `return .[], false;
-    }
-
-    remaining: s32;
-    if curl_multi_perform(multi_handle, *remaining)       != .OK  fail();
-    if curl_multi_poll(multi_handle, null, 0, 1000, null) != .OK  fail();
-
+get_completed :: () -> [] Completed_Request /* temporary storage */ {
     completed: [..] Completed_Request;
     completed.allocator = temp;
 
-    while true {
-        message := curl_multi_info_read(multi_handle, *remaining);
-        if message == null  break;
+    lock(*completed_requests_lock);
+    for * completed_requests {
+        c := Deep_Copy(it, .{},, temp);
+        array_add(*completed, c);
 
-        if message.msg == .DONE {
-            for requests {
-                if it.handle == message.easy_handle {
-                    assert(curl_multi_remove_handle(multi_handle, it.handle) == .OK);
+        free(it.url.data);
+        free(it.message.data);
+        deinit(*it.headers);
 
-                    curl_easy_cleanup(it.handle);
-
-                    completed_request: Completed_Request = ---;
-                    completed_request.success = message.data.result == .OK;
-                    completed_request.url = it.url;
-                    completed_request.message = builder_to_string(*it.body_builder,, temp);
-                    completed_request.headers = parse_headers(builder_to_string(*it.header_builder,, temp));
-                    array_add(*completed, completed_request);
-
-                    free_buffers(*it.body_builder);
-
-                    remove it;
-                }
-            }
-        }
+        remove it;
     }
+    unlock(*completed_requests_lock);
 
-    return completed, true;
+    return completed;
 }
 
-fetch :: (url: string) -> success: bool #must {
+fetch :: (url: string) {
     fail :: () #expand {
         curl_easy_cleanup(`request.handle);
         `return false;
     }
 
-    request := array_add(*requests);
+    work := New(Work);
+    work.type = .Fetch;
+    work.url = copy_string(url);
 
-    request.url = url;
-    request.handle = curl_easy_init();
+    lock(*work_queue_lock);
+    array_add(*work_queue, work);
+    unlock(*work_queue_lock);
+}
 
-    if curl_easy_setopt(request.handle, .URL, temp_c_string(url))             != .OK  fail();
-    if curl_easy_setopt(request.handle, .HEADERFUNCTION, header_callback)     != .OK  fail();
-    if curl_easy_setopt(request.handle, .HEADERDATA, *request.header_builder) != .OK  fail();
-    if curl_easy_setopt(request.handle, .WRITEFUNCTION, write_callback)       != .OK  fail();
-    if curl_easy_setopt(request.handle, .WRITEDATA, *request.body_builder)    != .OK  fail();
+#scope_file
 
-    // TODO: I am not sure why but curl always fail SSL certificate verification.
-    if curl_easy_setopt(request.handle, .SSL_VERIFYHOST, 0) != .OK  fail();
-    if curl_easy_setopt(request.handle, .SSL_VERIFYPEER, 0) != .OK  fail();
+worker_proc :: (thread: *Thread) -> s64 {
+    quit := false;
+    while !quit {
+        lock(*work_queue_lock);
+        for work_queue {
+            if it.type == .Stop {
+                quit = true;
+                break;
+            }
 
-    if curl_multi_add_handle(multi_handle, request.handle) != .OK  fail();
+            request := array_add(*requests);
+            request.url = it.url;
+            request.handle = curl_easy_init();
 
-    remaining: s32;
-    if curl_multi_perform(multi_handle, *remaining) != .OK  fail();
+            curl_easy_setopt(request.handle, .URL, temp_c_string(it.url));
+            curl_easy_setopt(request.handle, .HEADERFUNCTION, header_callback);
+            curl_easy_setopt(request.handle, .HEADERDATA, *request.header_builder);
+            curl_easy_setopt(request.handle, .WRITEFUNCTION, write_callback);
+            curl_easy_setopt(request.handle, .WRITEDATA, *request.body_builder);
 
-    return true;
+            //curl_easy_setopt(request.handle, .VERBOSE, 1);
+
+            // TODO: I am not sure why but curl always fails SSL certificate verification.
+            curl_easy_setopt(request.handle, .SSL_VERIFYHOST, 0);
+            curl_easy_setopt(request.handle, .SSL_VERIFYPEER, 0);
+
+            curl_multi_add_handle(multi_handle, request.handle);
+
+            free(it);
+
+            remove it;
+        }
+        unlock(*work_queue_lock);
+
+        if quit  break;
+
+        remaining: s32;
+        curl_multi_perform(multi_handle, *remaining);
+        curl_multi_poll(multi_handle, null, 0, 1000, null);
+
+        lock(*completed_requests_lock);
+        while true {
+            message := curl_multi_info_read(multi_handle, *remaining);
+            if message == null  break;
+
+            if message.msg == .DONE {
+                for requests {
+                    if it.handle == message.easy_handle {
+                        curl_multi_remove_handle(multi_handle, it.handle);
+                        curl_easy_cleanup(it.handle);
+
+                        completed_request: Completed_Request = ---;
+                        completed_request.success = message.data.result == .OK;
+                        completed_request.url = it.url;
+                        completed_request.message = builder_to_string(*it.body_builder);
+                        completed_request.headers = parse_headers(builder_to_string(*it.header_builder,, temp));
+
+                        array_add(*completed_requests, completed_request);
+
+                        free_buffers(*it.body_builder);
+                        free_buffers(*it.header_builder);
+
+                        remove it;
+                    }
+                }
+            }
+        }
+        unlock(*completed_requests_lock);
+
+        // TODO: We don't need to run this loop if we don't have any work to do.
+    }
+
+    return 0;
 }
 
 header_callback :: (ptr: *u8, size: u64, nmemb: u64, userdata: *void) -> u64 #c_call {
@@ -158,5 +218,23 @@ Request :: struct {
     header_builder: String_Builder;
 }
 
+Work_Type :: enum {
+    Stop;
+    Fetch;
+}
+
+Work :: struct {
+    type: Work_Type;
+    union {
+        url: string;
+    }
+}
+
 multi_handle: *CURL;
-requests:     [..] Request;
+
+requests: [..] Request;
+
+thread: Thread;
+
+work_queue_lock: Mutex;
+work_queue:      [..] *Work;

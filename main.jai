@@ -18,10 +18,7 @@ main :: () {
 
     init_networker();
 
-    for config.feeds {
-        success := fetch(it.url);
-        if !success  fatal("fetch");
-    }
+    for config.feeds  fetch(it.url);
 
     results := 0;
 
@@ -30,8 +27,7 @@ main :: () {
         current_time = seconds_since_init();
 
         if screen == .Loading {
-            completed, success := get_completed();
-            if !success  break;
+            completed := get_completed();
 
             for completed {
                 feed := get_feed(it.url);
@@ -357,6 +353,7 @@ selected_article: *Article;
 
 #import "Basic"()(MEMORY_DEBUGGER = true, TEMP_ALLOCATOR_POISON_FREED_MEMORY = true);
 #import "Curl"()(LINUX_USE_SYSTEM_LIBRARY = true);
+#import "Deep_Copy";
 #import "GetRect_LeftHanded";
 #import "Hash_Table";
 #import "Math";
@@ -364,6 +361,7 @@ selected_article: *Article;
 #import "String";
 #import "System";
 #import "Text_File_Handler";
+#import "Thread";
 #import "Window_Creation";
 #import "XML";
 
